@@ -5,6 +5,7 @@ import spiceypy as spice
 import spice_data as sd
 import planetary_data as pd
 import numerical_tools as nt
+import trajectory_sequences as ts
 
 spice.furnsh( sd.leapseconds_kernel )
 spice.furnsh( sd.de432s )
@@ -16,42 +17,57 @@ T_INIT = '2030-01-01 00:00:00' # ‘YYYY-MM-DD HH:MM:SS’ - Initital time for t
 et_init = spice.str2et( T_INIT )
 # print(et_init)
 
-M = 1 # number of spacecraft revolutions on the transfer orbits
+M = 0 # number of spacecraft revolutions on the transfer orbits
 
 ##############################
 
+class TransferLeg:
+    def __init__(self, bA, bB, cb=pd.sun):
+        self.bA = bA
+        self.bB = bB
+        self.cb = cb
+        self.state0A = spice.spkgeo(self.bA['SPICE_ID'], et_init, 'J2000', self.cb['SPICE_ID'])[0]
+        self.state0B = spice.spkgeo(bB['SPICE_ID'], et_init, 'J2000', self.cb['SPICE_ID'])[0]
+        self.tot = (2*M+1)*np.pi*np.sqrt((self.bA['sma'] + self.bB['sma'])**3/(8*self.cb['mu']))
 
-def tot(smaA, smaB, mu):
-    """
-    The exact time of transfer from A to B is approximated with a multiple of the Hohmann transfer time.
-    The assumption is that the exact time of the transfer will be in the interval [ΔT(1−ε ) ΔT(1+ε )] with ε small.
-    A: sma of planet A
-    smaB: sma of planet B
-    mu: gravitational parameter of the central body
-    """
+    def t_init(self,k=0):
+        """
+        k: phasing constraint / number of spacecraft revolutions on the transfer orbits (TBC)
+        """
+        dTheta0 = nt.vecs2angle(self.state0A[:3], self.state0B[:3], deg=False)
+        # print(dTheta0*nt.r2d)
+        deltaT = self.tot # seconds
+        T_init = ((2*k+1)*np.pi - self.bB['n']*deltaT - dTheta0)/(self.bB['n'] - self.bA['n']) * nt.sec2day # days
+        return T_init
 
-    return (2*M+1)*np.pi*np.sqrt((smaA + smaB)**3/(8*mu))
+class Trajectory:
+    def __init__(self, sequence):
+        self.sequence = sequence
+        self.Legs_tot = []
+        self.Legs_tinit = []
+        self.Legs_tlaunch = []
+
+    def calc_tlaunch(self):
+        for i in range(len(self.sequence)-1):
+            leg = TransferLeg(self.sequence[i], self.sequence[i+1])
+            t_init = leg.t_init()
+            self.Legs_tinit.append(t_init)
+            self.Legs_tlaunch.append(t_init-sum(self.Legs_tot))
+            self.Legs_tot.append(leg.tot)
 
 
-
-def t_init(bA, bB, k, cb):
-    """
-    bA: body A (departure)
-    bB: body B (arrival)
-    k: phasing constraint / number of spacecraft revolutions on the transfer orbits (TBC)
-    cb: central body
-    """
-    state0A = spice.spkgeo(bA['SPICE_ID'], et_init, 'J2000', cb['SPICE_ID'])[0]
-    state0B = spice.spkgeo(bB['SPICE_ID'], et_init, 'J2000', cb['SPICE_ID'])[0]
-
-    dTheta0 = nt.vecs2angle(state0A[:3], state0B[:3], deg=False)
-    print(dTheta0*nt.r2d)
-    deltaT = tot(bA['sma'], bB['sma'], cb['mu']) # seconds
-    T_init = ((2*k+1)*np.pi - bB['n']*deltaT - dTheta0)/(bB['n'] - bA['n']) * nt.sec2day # days
-    return T_init
+    def F_merit(self, k_list):
+        return
 
 if __name__=='__main__':
-    print(t_init(pd.earth, pd.mars, 3, pd.sun))
+    #### Test phasing problem single transfer leg ####
+    # transfer = TransferLeg(pd.earth, pd.mars, pd.sun)
+    # print(transfer.t_init(0))
+
+    #### Test multiple transfer leg ####
+
+    traj = Trajectory(ts.EVMJ)
+
 
 # TODO
 # Check if the phasing problem can return negative initial time if the target body has a higher sma than the origin
